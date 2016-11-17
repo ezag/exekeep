@@ -1,0 +1,239 @@
+# Copyright 2012-2015 Johannes Nixdorf <mixi@exherbo.org>
+# Based in part upon 'mplayer2.exlib', which is
+#   Copyright 2011 Elias Pipping <pipping@exherbo.org>
+#   Copyright 2011 Alex Elsayed <eternaleye@gmail.com>
+# Distributed under the terms of the GNU General Public License v2
+
+# last checked revision: e431a7bbfd86e667f8bbf871247c2afd97931b97
+# NOTE: check player/lua/ytdl_hook.lua for the minimum required youtube-dl version
+
+require freedesktop-desktop github [ user="mpv-player" tag="v${PV}" ] gtk-icon-cache waf \
+        lua [ multibuild=false whitelist="5.1 5.2" with_opt=true ]
+
+export_exlib_phases src_prepare src_configure pkg_postrm pkg_postinst
+
+WAF_VER=1.8.12
+
+SUMMARY="Video player based on MPlayer/mplayer2"
+HOMEPAGE="https://mpv.io"
+DOWNLOADS+=" https://waf.io/pub/release/waf-${WAF_VER}"
+
+UPSTREAM_RELEASE_NOTES="https://github.com/mpv-player/mpv/releases"
+
+LICENCES="GPL-2 GPL-3 LGPL-2.1"
+SLOT="0"
+
+MYOPTIONS="
+    alsa
+    bluray      [[ description = [ Adds support for video blurays ] ]]
+    cd          [[ description = [ Adds support for audio CDs ] ]]
+    drm         [[ description = [ Adds support for a video output directly to the framebuffer ] ]]
+    dvd
+    dvd-menu    [[ description = [ Adds dvd menu support through libdvdnav ]
+                   requires = [ dvd ] ]]
+    icc         [[ description = [ Adds support for using ICC profiles through lcms2 ] ]]
+    lua         [[ description = [ Adds lua scripting support and an onscreen controller ] ]]
+    opengl
+    pulseaudio
+    screensaver [[ description = [ Use the X Screen Saver extension, e.g. to block the screensaver ] requires = [ X ] ]]
+    va          [[ description = [ Adds support for decoding and presenting video using the Video Acceleration API ] ]]
+    vdpau       [[ description = [ Adds support for presenting and decoding video using the VDPAU API (-vo=vdpau and -hwdec=vdpau) ]
+                   requires = [ providers: ffmpeg ] ]]
+    wayland
+    X
+    zsh-completion [[ description = [ Generate and install a zsh completion file ] ]]
+    ( providers: ffmpeg libav ) [[ number-selected = exactly-one ]]
+    ( providers: ijg-jpeg jpeg-turbo ) [[ number-selected = exactly-one ]]
+"
+
+# disabled because i can't figure out waf
+RESTRICT="test"
+
+DEPENDENCIES="
+    build:
+        dev-lang/perl:*[>=5.8]
+        dev-python/docutils
+        virtual/pkg-config
+        X? ( x11-proto/xproto )
+    build+run:
+        media-libs/libass[fontconfig][>=0.12.1]
+        sys-libs/ncurses
+        sys-libs/zlib
+        alsa? ( sys-sound/alsa-lib[>=1.0.18] )
+        bluray? ( media-libs/libbluray[>=0.3.0] )
+        cd? (
+            dev-libs/libcdio
+            dev-libs/libcdio-paranoia
+        )
+        drm? ( x11-dri/libdrm )
+        dvd? ( media-libs/libdvdread[>=4.1.0] )
+        dvd-menu? ( media-libs/libdvdnav[>=4.2.0] )
+        icc? ( media-libs/lcms2[>=2.6] )
+        opengl? ( x11-dri/mesa[X]  )
+        providers:ffmpeg? ( media/ffmpeg[>=2.4][va?][vdpau?] )
+        providers:ijg-jpeg? ( media-libs/jpeg:= )
+        providers:jpeg-turbo? ( media-libs/libjpeg-turbo )
+        providers:libav? ( media/libav[>=11] )
+        pulseaudio? ( media-sound/pulseaudio[>=1.0] )
+        screensaver? ( x11-libs/libXScrnSaver )
+        va? ( x11-libs/libva[>=1.4.0][X?][opengl?][wayland?] )
+        vdpau? ( x11-libs/libvdpau[>=0.2] )
+        wayland? (
+            sys-libs/wayland[>=1.6.0]
+            x11-dri/mesa[wayland][>=9.0.0]
+            x11-libs/libxkbcommon[>=0.3.0]
+        )
+        X? (
+            x11-libs/libX11
+            x11-libs/libXext
+            x11-libs/libXinerama
+            x11-libs/libXrandr
+            x11-libs/libXv
+        )
+    suggestion:
+        lua? ( net-misc/youtube-dl[>=2015.02.23.1] [[ description = [ Support to play videos from YouTube and other video sites ] ]] )
+"
+
+mpv_src_prepare() {
+    edo cp "${FETCHEDDIR}"/waf-${WAF_VER} waf
+    chmod +x waf
+
+    default
+}
+
+mpv_src_configure() {
+    local args=(
+        # paths
+        --prefix=/usr/$(exhost --target)
+        --confdir=/etc/${PN}
+        --datadir=/usr/share
+        --docdir=/usr/share/doc/${PNVR}
+        --htmldir=/usr/share/doc/${PNVR}/html
+
+        # doc
+        --disable-html-build
+        --disable-pdf-build
+        --enable-manpage-build
+
+        ## misc
+        # Apparently we install the .pc files the same way as FreeBSD.
+        $(option lua --lua=${LUA_ABIS/./}fbsd --disable-lua)
+        $(option_enable zsh-completion zsh-comp)
+        --disable-enca
+        --disable-libguess
+        --disable-test
+        --disable-uchardet
+        --disable-vapoursynth
+        # Since upstream commit d0238711 this is disabled by default and will be deprecated at some
+        # point soon.
+        --enable-encoding
+        --enable-iconv
+        --enable-jpeg
+        --enable-libass
+        --enable-libass-osd
+        --enable-libmpv-shared
+        --enable-shm
+        --enable-termios
+
+        ## sources
+        --enable-audio-input
+        --enable-dvbin
+        --enable-libavdevice
+        --enable-tv
+        --enable-tv-v4l2
+        $(option_enable bluray libbluray)
+        $(option_enable cd cdda)
+        $(option_enable dvd dvdread)
+        $(option_enable dvd-menu dvdnav)
+        --disable-libarchive
+        --disable-libsmbclient
+        --disable-libv4l2
+
+        ## audio
+        $(option_enable 'providers:ffmpeg' libswresample)
+        $(option_enable 'providers:libav' libavresample)
+        --disable-rubberband
+
+        # audio out
+        $(option_enable alsa)
+        $(option_enable pulseaudio pulse)
+        --disable-coreaudio
+        --disable-jack
+        --disable-openal
+        --disable-opensles
+        --disable-rsound
+        --disable-sdl1
+        --disable-sdl2
+        --disable-sndio
+        --disable-wasapi
+        --enable-oss-audio
+
+        ## video
+        --disable-caca
+        $(option_enable icc lcms2)
+
+        # video out
+        $(option_enable drm)
+        $(if option drm; then
+            option_enable opengl egl-drm
+            option_enable va vaapi-drm
+        fi)
+
+        $(option_enable opengl any-gl)
+        $(option_enable opengl standard-gl)
+        $(option_enable opengl gl)
+        $(option_enable opengl plain-gl)
+
+        $(option_enable wayland)
+        $(if option wayland; then
+            option_enable opengl gl-wayland
+            option_enable va vaapi-wayland
+        fi)
+
+        $(option_enable X x11)
+        $(option_enable X xv)
+        $(option_enable X xext)
+        $(option_enable X xinerama)
+        $(option_enable X xrandr)
+        $(if option X; then
+            option_enable screensaver xss
+            option_enable opengl gl-x11
+            option_enable opengl egl-x11
+            option_enable va vaapi-x11
+            if option opengl; then
+                option_enable va vaapi-glx
+                option_enable vdpau vdpau-gl-x11
+            fi
+        fi)
+
+        --disable-android
+        --disable-android-gl
+        --disable-cocoa
+        --disable-direct3d
+        --disable-gl-cocoa
+        --disable-gl-win32
+        --disable-videotoolbox-gl
+
+        # hwaccel
+        $(option_enable va vaapi)
+        $(option_enable va vaapi-hwaccel)
+        $(option_enable vdpau)
+        $(option_enable vdpau vdpau-hwaccel)
+        --disable-d3d-hwaccel
+        --disable-videotoolbox-hwaccel
+    )
+
+    ewaf --jobs=1 configure \
+       "${args[@]}"
+}
+
+mpv_pkg_postrm() {
+    freedesktop-desktop_pkg_postrm
+    gtk-icon-cache_pkg_postrm
+}
+
+mpv_pkg_postinst() {
+    freedesktop-desktop_pkg_postinst
+    gtk-icon-cache_pkg_postinst
+}
+
